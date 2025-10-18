@@ -26,7 +26,7 @@ export async function decrypt(token: string): Promise<any> {
 
 export async function getSession() {
   const cookieStore = await cookies();
-  const token = cookieStore.get("session")?.value;
+  const token = cookieStore.get("token")?.value;
   if (!token) return null;
   return await decrypt(token);
 }
@@ -38,7 +38,7 @@ export async function setSession(
 ) {
   const session = await encrypt({ userId, username, email });
   const cookieStore = await cookies();
-  cookieStore.set("session", session, {
+  cookieStore.set("token", session, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     maxAge: 60 * 60 * 24 * 7, // 7 days
@@ -48,5 +48,9 @@ export async function setSession(
 
 export async function deleteSession() {
   const cookieStore = await cookies();
-  cookieStore.delete("session");
+  cookieStore.delete("token");
+}
+
+export async function verifySession(token: string) {
+  return await decrypt(token);
 }

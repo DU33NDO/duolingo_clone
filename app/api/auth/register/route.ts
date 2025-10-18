@@ -46,6 +46,7 @@ export async function POST(request: NextRequest) {
       username,
       email,
       password: hashedPassword,
+      isOnline: true,
     })) as { _id: string; username: string; email: string };
 
     // Set session

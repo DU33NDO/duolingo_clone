@@ -11,7 +11,9 @@ export function UserInit() {
     // Check if user is already logged in on mount
     const checkAuth = async () => {
       try {
-        const response = await fetch("/api/auth/me");
+        const response = await fetch("/api/auth/me", {
+          credentials: "include",
+        });
         if (response.ok) {
           const data = await response.json();
           setUser({
@@ -20,6 +22,14 @@ export function UserInit() {
             email: data.user.email,
             streak: 7, // Static value
             xp: 1250, // Static value
+          });
+
+          // Set user as online
+          await fetch("/api/users/status", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ isOnline: true }),
+            credentials: "include",
           });
         }
       } catch (error) {
@@ -30,6 +40,24 @@ export function UserInit() {
     if (!user) {
       checkAuth();
     }
+
+    // Set offline when page is closed
+    const handleBeforeUnload = async () => {
+      if (user) {
+        await fetch("/api/users/status", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ isOnline: false }),
+          credentials: "include",
+        });
+      }
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+    };
   }, [user, setUser]);
 
   return null;

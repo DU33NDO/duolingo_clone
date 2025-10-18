@@ -3,7 +3,7 @@
 import { useAtom } from "jotai";
 import { coursesAtom, userAtom } from "@/lib/store";
 import { Header } from "@/components/header";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -17,22 +17,10 @@ import type { CourseDetails } from "@/lib/store";
 
 export default function CoursesPage() {
   const [courses] = useAtom(coursesAtom);
-  const [user, setUser] = useAtom(userAtom);
+  const [user] = useAtom(userAtom);
   const [selectedCourse, setSelectedCourse] = useState<CourseDetails | null>(
     null
   );
-
-  useEffect(() => {
-    if (!user) {
-      setUser({
-        id: "1",
-        name: "Alex Johnson",
-        email: "alex@example.com",
-        streak: 7,
-        xp: 1250,
-      });
-    }
-  }, [user, setUser]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-background to-primary/5">

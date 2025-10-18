@@ -44,6 +44,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Update user online status
+    await User.findByIdAndUpdate(user._id, {
+      isOnline: true,
+      lastSeen: new Date(),
+    });
+
     // Set session
     await setSession(user._id.toString(), user.username, user.email);
 

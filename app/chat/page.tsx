@@ -1,272 +1,396 @@
-"use client"
+"use client";
 
-import type React from "react"
+import { useEffect, useState, useRef } from "react";
+import { useAtom } from "jotai";
+import { userAtom } from "@/lib/store";
+import { Header } from "@/components/header";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Badge } from "@/components/ui/badge";
+import { Send, Circle } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { useToast } from "@/hooks/use-toast";
 
-import { useState, useEffect, useRef } from "react"
-import { useAtom } from "jotai"
-import { userAtom } from "@/lib/store"
-import { Header } from "@/components/header"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Input } from "@/components/ui/input"
-import { Button } from "@/components/ui/button"
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import { Badge } from "@/components/ui/badge"
-import { ScrollArea } from "@/components/ui/scroll-area"
-import { Send, Users, Circle } from "lucide-react"
-import { useRouter } from "next/navigation"
-import { WebSocketClient } from "@/lib/websocket"
-
-interface Message {
-  id: string
-  userId: string
-  userName: string
-  userAvatar?: string
-  content: string
-  timestamp: Date
+interface User {
+  id: string;
+  username: string;
+  email: string;
+  avatar?: string;
+  isOnline: boolean;
+  lastSeen: Date;
 }
 
-interface ChatUser {
-  id: string
-  name: string
-  avatar?: string
-  online: boolean
+interface Message {
+  id: string;
+  senderId: string;
+  receiverId: string;
+  content: string;
+  isRead: boolean;
+  createdAt: Date;
 }
 
 export default function ChatPage() {
-  const [user] = useAtom(userAtom)
-  const router = useRouter()
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: "1",
-      userId: "2",
-      userName: "Maria Garcia",
-      content: "Hey! Anyone want to practice Spanish conversation?",
-      timestamp: new Date(Date.now() - 1000 * 60 * 5),
-    },
-    {
-      id: "2",
-      userId: "3",
-      userName: "Jean Dupont",
-      content: "I'm learning French! Would love to chat with native speakers.",
-      timestamp: new Date(Date.now() - 1000 * 60 * 3),
-    },
-    {
-      id: "3",
-      userId: "4",
-      userName: "Hans Mueller",
-      content: "Guten Tag! Looking for German practice partners.",
-      timestamp: new Date(Date.now() - 1000 * 60 * 2),
-    },
-  ])
-  const [newMessage, setNewMessage] = useState("")
-  const [onlineUsers, setOnlineUsers] = useState<ChatUser[]>([
-    { id: "2", name: "Maria Garcia", online: true },
-    { id: "3", name: "Jean Dupont", online: true },
-    { id: "4", name: "Hans Mueller", online: true },
-    { id: "5", name: "Yuki Tanaka", online: false },
-  ])
-  const [isConnected, setIsConnected] = useState(false)
-  const messagesEndRef = useRef<HTMLDivElement>(null)
-  const wsClient = useRef<WebSocketClient | null>(null)
+  const [currentUser] = useAtom(userAtom);
+  const router = useRouter();
+  const { toast } = useToast();
+  const [users, setUsers] = useState<User[]>([]);
+  const [selectedUser, setSelectedUser] = useState<User | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [inputMessage, setInputMessage] = useState("");
+  const [ws, setWs] = useState<WebSocket | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const messagePollingRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Redirect if not authenticated
   useEffect(() => {
-    if (!user) {
-      router.push("/auth")
-      return
+    if (!currentUser) {
+      router.push("/auth");
     }
+  }, [currentUser, router]);
 
-    // Initialize WebSocket client (simulated for demo)
-    wsClient.current = new WebSocketClient()
-
-    // Simulate WebSocket connection
-    const simulateConnection = () => {
-      setIsConnected(true)
-      console.log("[v0] Simulated WebSocket connection established")
+  // Fetch all users
+  const fetchUsers = async () => {
+    try {
+      const response = await fetch("/api/users", {
+        credentials: "include",
+      });
+      if (response.ok) {
+        const data = await response.json();
+        console.log("Fetched users:", data.users);
+        setUsers(data.users);
+      } else {
+        const errorData = await response.json();
+        console.error("Error fetching users:", errorData);
+        toast({
+          title: "Error",
+          description: errorData.error || "Failed to fetch users",
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      console.error("Error fetching users:", error);
+      toast({
+        title: "Error",
+        description: "Failed to fetch users",
+        variant: "destructive",
+      });
     }
+  };
 
-    simulateConnection()
+  // Fetch messages for selected user
+  const fetchMessages = async (userId: string) => {
+    try {
+      const response = await fetch(`/api/messages?userId=${userId}`, {
+        credentials: "include",
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setMessages(data.messages);
+      }
+    } catch (error) {
+      console.error("Error fetching messages:", error);
+    }
+  };
 
-    // Cleanup
+  // Update user online status
+  const updateOnlineStatus = async (isOnline: boolean) => {
+    try {
+      await fetch("/api/users/status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isOnline }),
+        credentials: "include",
+      });
+    } catch (error) {
+      console.error("Error updating status:", error);
+    }
+  };
+
+  // Initialize
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const initialize = async () => {
+      setIsLoading(true);
+      await updateOnlineStatus(true);
+      await fetchUsers();
+      setIsLoading(false);
+    };
+
+    initialize();
+
+    // Poll for users status updates
+    const usersInterval = setInterval(fetchUsers, 5000);
+
+    // Set offline on unmount
     return () => {
-      if (wsClient.current) {
-        wsClient.current.disconnect()
-      }
-    }
-  }, [user, router])
+      clearInterval(usersInterval);
+      updateOnlineStatus(false);
+    };
+  }, [currentUser]);
 
+  // Handle user selection
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
-  }, [messages])
+    if (selectedUser) {
+      fetchMessages(selectedUser.id);
 
-  const handleSendMessage = (e: React.FormEvent) => {
-    e.preventDefault()
-
-    if (!newMessage.trim() || !user) return
-
-    const message: Message = {
-      id: Date.now().toString(),
-      userId: user.id,
-      userName: user.name,
-      userAvatar: user.avatar,
-      content: newMessage,
-      timestamp: new Date(),
-    }
-
-    setMessages((prev) => [...prev, message])
-    setNewMessage("")
-
-    // Simulate sending via WebSocket
-    if (wsClient.current && wsClient.current.isConnected()) {
-      wsClient.current.send({
-        type: "message",
-        data: message,
-      })
-    }
-
-    // Simulate receiving a response after a delay
-    setTimeout(() => {
-      const responses = [
-        "That's interesting! Tell me more.",
-        "Great point! I agree with you.",
-        "I'm also learning that language!",
-        "Thanks for sharing!",
-      ]
-      const randomResponse = responses[Math.floor(Math.random() * responses.length)]
-
-      const responseMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        userId: "bot",
-        userName: "Language Bot",
-        content: randomResponse,
-        timestamp: new Date(),
+      // Poll for new messages every 2 seconds
+      if (messagePollingRef.current) {
+        clearInterval(messagePollingRef.current);
       }
+      messagePollingRef.current = setInterval(() => {
+        fetchMessages(selectedUser.id);
+      }, 2000);
+    }
 
-      setMessages((prev) => [...prev, responseMessage])
-    }, 2000)
-  }
+    return () => {
+      if (messagePollingRef.current) {
+        clearInterval(messagePollingRef.current);
+      }
+    };
+  }, [selectedUser]);
 
-  const formatTime = (date: Date) => {
-    return new Intl.DateTimeFormat("en-US", {
-      hour: "numeric",
-      minute: "numeric",
-      hour12: true,
-    }).format(date)
-  }
+  // Auto scroll to bottom
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [messages]);
 
-  if (!user) {
-    return null
+  // Send message
+  const handleSendMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (!inputMessage.trim() || !selectedUser || !currentUser) return;
+
+    try {
+      const response = await fetch("/api/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          receiverId: selectedUser.id,
+          content: inputMessage,
+        }),
+        credentials: "include",
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setMessages((prev) => [...prev, data.message]);
+        setInputMessage("");
+      } else {
+        toast({
+          title: "Error",
+          description: "Failed to send message",
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      console.error("Error sending message:", error);
+      toast({
+        title: "Error",
+        description: "Failed to send message",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const formatLastSeen = (date: Date) => {
+    const now = new Date();
+    const lastSeen = new Date(date);
+    const diff = now.getTime() - lastSeen.getTime();
+    const minutes = Math.floor(diff / 60000);
+    const hours = Math.floor(minutes / 60);
+    const days = Math.floor(hours / 24);
+
+    if (minutes < 1) return "just now";
+    if (minutes < 60) return `${minutes}m ago`;
+    if (hours < 24) return `${hours}h ago`;
+    return `${days}d ago`;
+  };
+
+  if (!currentUser) {
+    return null;
   }
 
   return (
     <div className="min-h-screen bg-background">
       <Header />
 
-      <main className="container py-6">
-        <div className="grid gap-6 lg:grid-cols-4">
-          {/* Online Users Sidebar */}
-          <Card className="lg:col-span-1">
+      <main className="py-6">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 h-[calc(100vh-120px)]">
+          {/* Users List */}
+          <Card className="md:col-span-1">
             <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-lg">
-                <Users className="h-5 w-5" />
-                Online Users
-              </CardTitle>
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Circle className={`h-2 w-2 fill-current ${isConnected ? "text-green-500" : "text-red-500"}`} />
-                {isConnected ? "Connected" : "Disconnected"}
-              </div>
+              <CardTitle>Contacts</CardTitle>
             </CardHeader>
-            <CardContent>
-              <ScrollArea className="h-[calc(100vh-16rem)]">
-                <div className="space-y-3">
-                  {onlineUsers.map((chatUser) => (
-                    <div
-                      key={chatUser.id}
-                      className="flex items-center gap-3 p-2 rounded-lg hover:bg-muted/50 cursor-pointer transition-colors"
-                    >
-                      <div className="relative">
-                        <Avatar className="h-10 w-10">
-                          <AvatarImage src={chatUser.avatar || "/placeholder.svg"} alt={chatUser.name} />
-                          <AvatarFallback>{chatUser.name.charAt(0)}</AvatarFallback>
-                        </Avatar>
-                        <Circle
-                          className={`absolute bottom-0 right-0 h-3 w-3 fill-current ${
-                            chatUser.online ? "text-green-500" : "text-gray-400"
-                          } ring-2 ring-background`}
-                        />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="font-medium text-sm truncate">{chatUser.name}</div>
-                        <div className="text-xs text-muted-foreground">{chatUser.online ? "Online" : "Offline"}</div>
-                      </div>
+            <CardContent className="p-0">
+              <ScrollArea className="h-[calc(100vh-220px)]">
+                <div className="space-y-2 p-4">
+                  {isLoading ? (
+                    <div className="text-center text-muted-foreground py-8">
+                      Loading users...
                     </div>
-                  ))}
+                  ) : users.length === 0 ? (
+                    <div className="text-center text-muted-foreground py-8">
+                      <p className="mb-2">No other users found</p>
+                      <p className="text-xs">
+                        Register more accounts to start chatting
+                      </p>
+                    </div>
+                  ) : (
+                    users.map((user) => (
+                      <div
+                        key={user.id}
+                        onClick={() => setSelectedUser(user)}
+                        className={`flex items-center gap-3 p-3 rounded-lg cursor-pointer transition-colors ${
+                          selectedUser?.id === user.id
+                            ? "bg-primary/10 border border-primary"
+                            : "hover:bg-muted"
+                        }`}
+                      >
+                        <div className="relative">
+                          <Avatar>
+                            <AvatarImage
+                              src={user.avatar}
+                              alt={user.username}
+                            />
+                            <AvatarFallback className="bg-primary text-primary-foreground">
+                              {user.username.charAt(0).toUpperCase()}
+                            </AvatarFallback>
+                          </Avatar>
+                          <Circle
+                            className={`absolute bottom-0 right-0 h-3 w-3 ${
+                              user.isOnline
+                                ? "fill-green-500 text-green-500"
+                                : "fill-gray-400 text-gray-400"
+                            }`}
+                          />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium truncate">
+                            {user.username}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {user.isOnline
+                              ? "Online"
+                              : formatLastSeen(user.lastSeen)}
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  )}
                 </div>
               </ScrollArea>
             </CardContent>
           </Card>
 
           {/* Chat Area */}
-          <Card className="lg:col-span-3">
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <CardTitle>Global Chat</CardTitle>
-                <Badge variant="secondary" className="gap-1">
-                  <Circle className="h-2 w-2 fill-current text-green-500" />
-                  {onlineUsers.filter((u) => u.online).length} online
-                </Badge>
-              </div>
-            </CardHeader>
-            <CardContent className="p-0">
-              <ScrollArea className="h-[calc(100vh-20rem)] px-6">
-                <div className="space-y-4 py-4">
-                  {messages.map((message) => {
-                    const isOwnMessage = message.userId === user.id
-
-                    return (
-                      <div key={message.id} className={`flex gap-3 ${isOwnMessage ? "flex-row-reverse" : ""}`}>
-                        <Avatar className="h-8 w-8 mt-1">
-                          <AvatarImage src={message.userAvatar || "/placeholder.svg"} alt={message.userName} />
-                          <AvatarFallback>{message.userName.charAt(0)}</AvatarFallback>
-                        </Avatar>
-
-                        <div className={`flex flex-col gap-1 max-w-[70%] ${isOwnMessage ? "items-end" : ""}`}>
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm font-medium">{message.userName}</span>
-                            <span className="text-xs text-muted-foreground">{formatTime(message.timestamp)}</span>
-                          </div>
+          <Card className="md:col-span-2">
+            {selectedUser ? (
+              <>
+                <CardHeader className="border-b">
+                  <div className="flex items-center gap-3">
+                    <div className="relative">
+                      <Avatar>
+                        <AvatarImage
+                          src={selectedUser.avatar}
+                          alt={selectedUser.username}
+                        />
+                        <AvatarFallback className="bg-primary text-primary-foreground">
+                          {selectedUser.username.charAt(0).toUpperCase()}
+                        </AvatarFallback>
+                      </Avatar>
+                      <Circle
+                        className={`absolute bottom-0 right-0 h-3 w-3 ${
+                          selectedUser.isOnline
+                            ? "fill-green-500 text-green-500"
+                            : "fill-gray-400 text-gray-400"
+                        }`}
+                      />
+                    </div>
+                    <div>
+                      <CardTitle className="text-lg">
+                        {selectedUser.username}
+                      </CardTitle>
+                      <p className="text-xs text-muted-foreground">
+                        {selectedUser.isOnline
+                          ? "Online"
+                          : `Last seen ${formatLastSeen(
+                              selectedUser.lastSeen
+                            )}`}
+                      </p>
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent className="p-0 flex flex-col">
+                  <ScrollArea
+                    className="h-[calc(100vh-360px)] p-4"
+                    ref={scrollRef}
+                  >
+                    <div className="space-y-4">
+                      {messages.length === 0 ? (
+                        <div className="text-center text-muted-foreground py-12">
+                          No messages yet. Start the conversation!
+                        </div>
+                      ) : (
+                        messages.map((message) => (
                           <div
-                            className={`rounded-lg px-4 py-2 ${
-                              isOwnMessage ? "bg-primary text-primary-foreground" : "bg-muted"
+                            key={message.id}
+                            className={`flex flex-col gap-1 ${
+                              message.senderId === currentUser.id
+                                ? "items-end"
+                                : "items-start"
                             }`}
                           >
-                            <p className="text-sm">{message.content}</p>
+                            <div
+                              className={`rounded-lg px-4 py-2 max-w-[70%] ${
+                                message.senderId === currentUser.id
+                                  ? "bg-primary text-primary-foreground"
+                                  : "bg-muted text-foreground"
+                              }`}
+                            >
+                              <p>{message.content}</p>
+                            </div>
+                            <div className="text-xs text-muted-foreground px-1">
+                              {new Date(message.createdAt).toLocaleTimeString(
+                                [],
+                                { hour: "2-digit", minute: "2-digit" }
+                              )}
+                            </div>
                           </div>
-                        </div>
-                      </div>
-                    )
-                  })}
-                  <div ref={messagesEndRef} />
-                </div>
-              </ScrollArea>
-
-              <div className="border-t p-4">
-                <form onSubmit={handleSendMessage} className="flex gap-2">
-                  <Input
-                    value={newMessage}
-                    onChange={(e) => setNewMessage(e.target.value)}
-                    placeholder="Type your message..."
-                    className="flex-1"
-                    disabled={!isConnected}
-                  />
-                  <Button type="submit" size="icon" disabled={!newMessage.trim() || !isConnected}>
-                    <Send className="h-4 w-4" />
-                  </Button>
-                </form>
+                        ))
+                      )}
+                    </div>
+                  </ScrollArea>
+                  <form
+                    onSubmit={handleSendMessage}
+                    className="flex gap-2 p-4 border-t"
+                  >
+                    <Input
+                      placeholder="Type a message..."
+                      value={inputMessage}
+                      onChange={(e) => setInputMessage(e.target.value)}
+                      className="flex-1"
+                    />
+                    <Button type="submit" size="icon">
+                      <Send className="h-4 w-4" />
+                    </Button>
+                  </form>
+                </CardContent>
+              </>
+            ) : (
+              <div className="flex items-center justify-center h-full text-muted-foreground">
+                Select a user to start chatting
               </div>
-            </CardContent>
+            )}
           </Card>
         </div>
       </main>
     </div>
-  )
+  );
 }
