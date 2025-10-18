@@ -21,10 +21,17 @@ export async function GET() {
     await connectDB();
 
     // Get all users except the current user
-    const users = await User.find(
+    const users = (await User.find(
       { _id: { $ne: session.userId } },
       { password: 0 }
-    ).sort({ isOnline: -1, lastSeen: -1 });
+    ).sort({ isOnline: -1, lastSeen: -1 })) as Array<{
+      _id: { toString: () => string };
+      username: string;
+      email: string;
+      avatar?: string;
+      isOnline: boolean;
+      lastSeen: Date;
+    }>;
 
     return NextResponse.json(
       {
